@@ -1,0 +1,206 @@
+package no.nordicsemi.android.nrftemp;
+
+import no.nordicsemi.android.nrftemp.ble.TemperatureManager;
+import no.nordicsemi.android.nrftemp.ble.TemperatureManagerCallback;
+import no.nordicsemi.android.nrftemp.database.DatabaseHelper;
+import no.nordicsemi.android.nrftemp.fragment.ScannerFragment;
+import no.nordicsemi.android.nrftemp.fragment.SensorDataFragment;
+import no.nordicsemi.android.nrftemp.fragment.SensorsFragment;
+import no.nordicsemi.android.nrftemp.fragment.SettingsFragment;
+import android.app.ActionBar;
+import android.app.Activity;
+import android.app.FragmentTransaction;
+import android.bluetooth.BluetoothAdapter;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
+import android.preference.PreferenceManager;
+import android.widget.Toast;
+
+import com.nordic.android.nrftemp.R;
+
+public class SensorsActivity extends Activity implements SensorsFragment.SensorFragmentListener, SensorDataFragment.SensorDataFragmentListener, ScannerFragment.ScannerFragmentListener,
+		SettingsFragment.SettingsFragmentListener {
+	private static final int REQUEST_ENABLE_BT = 1;
+
+	private TemperatureManager mTemperatureManager;
+	private DatabaseHelper mDatabaseHelper;
+	private boolean mScannerVisible;
+
+	@Override
+	protected void onCreate(final Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_sensors);
+
+		setupActionBar();
+
+		// ensure that Bluetooth exists
+		if (!ensureBLEExists())
+			finish();
+
+		// create the database helper instance
+		mDatabaseHelper = new DatabaseHelper(this);
+
+		// create and initialize the temperature manager
+		mTemperatureManager = new TemperatureManager(this, mDatabaseHelper);
+
+		if (savedInstanceState == null) {
+			final FragmentTransaction ft = getFragmentManager().beginTransaction();
+			final SensorsFragment fragment = SensorsFragment.getInstence();
+			ft.add(R.id.content, fragment);
+			ft.commit();
+
+			mTemperatureManager.addCallback(fragment);
+		}
+	}
+
+	@Override
+	protected void onDestroy() {
+		super.onDestroy();
+
+		mDatabaseHelper.removeAllNewSensors();
+		mDatabaseHelper.removeRssi();
+		mDatabaseHelper = null;
+		mTemperatureManager = null;
+	}
+
+	@Override
+	protected void onResume() {
+		super.onResume();
+
+		// stop periodic scan
+		final Intent intent = new Intent(this, StopPeriodicScanBroadcastReceiver.class);
+		sendBroadcast(intent);
+
+		// start scanning if the Bluetooth is enabled
+		if (ensureBLEEnabled())
+			scan();
+	}
+
+	@Override
+	protected void onPause() {
+		super.onPause();
+
+		// stop scanning
+		mTemperatureManager.stopScan();
+
+		// start periodic scan
+		final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+		final boolean scanInBackground = preferences.getBoolean(SettingsFragment.SETTEINGS_SCAN_IN_BACKGROUND, true);
+		if (scanInBackground) {
+			final Intent intent = new Intent(this, StartPeriodicScanBroadcastReceiver.class);
+			sendBroadcast(intent);
+		}
+	}
+
+	@Override
+	public void onActivityResult(int requestCode, int resultCode, Intent data) {
+		switch (requestCode) {
+		case REQUEST_ENABLE_BT:
+			if (resultCode == Activity.RESULT_OK) {
+				// Bluetooth is on, start the play
+				scan();
+			} else {
+				// user did not turn on the Bluetooth on the device, just terminate
+				finish();
+			}
+		}
+	}
+
+	/**
+	 * This method scans for Bluetooth Low Energy temperature sensors in range
+	 */
+	private void scan() {
+		mTemperatureManager.startScan();
+	}
+
+	@Override
+	public void onAddSensor(long sensorId) {
+		mDatabaseHelper.updateSensorAddToStored(sensorId);
+		getFragmentManager().popBackStack();
+		mScannerVisible = false;
+		onShowSensorData(sensorId, true);
+	}
+
+	@Override
+	public void onSettingsOpened() {
+		final FragmentTransaction ft = getFragmentManager().beginTransaction();
+		ft.replace(R.id.content, new SettingsFragment());
+		ft.addToBackStack(null);
+		ft.commit();
+	}
+
+	@Override
+	public void onScanForSensors() {
+		if (mScannerVisible)
+			return;
+
+		final FragmentTransaction ft = getFragmentManager().beginTransaction();
+		final ScannerFragment fragment = ScannerFragment.getInstance();
+		ft.setCustomAnimations(R.animator.zoom_in, R.animator.zoom_out, R.animator.zoom_in, R.animator.zoom_out);
+		ft.add(R.id.content, fragment);
+		ft.addToBackStack(null);
+		ft.commit();
+
+		mTemperatureManager.addCallback(fragment);
+	}
+
+	@Override
+	public void onShowSensorData(final long sensorId, final boolean focus) {
+		if (mScannerVisible)
+			return;
+
+		final FragmentTransaction ft = getFragmentManager().beginTransaction();
+		final SensorDataFragment fragment = SensorDataFragment.getInstance(sensorId, focus);
+		ft.setTransition(FragmentTransaction.TRANSIT_FRAGMENT_OPEN);
+		ft.setCustomAnimations(android.R.animator.fade_in, android.R.animator.fade_out, android.R.animator.fade_in, android.R.animator.fade_out);
+		ft.replace(R.id.content, fragment);
+		ft.addToBackStack(null);
+		ft.commit();
+
+		mTemperatureManager.addCallback(fragment);
+	}
+
+	@Override
+	public void setScannerVisible(final boolean visible) {
+		mScannerVisible = visible;
+	}
+
+	@Override
+	public void onUnregisterCallback(TemperatureManagerCallback callback) {
+		mTemperatureManager.removeCallback(callback);
+	}
+
+	/**
+	 * Returns the database helper that allows database operations
+	 */
+	public DatabaseHelper getDatabaseHelper() {
+		return mDatabaseHelper;
+	}
+
+	private void setupActionBar() {
+		final ActionBar actionBar = getActionBar();
+
+		actionBar.setDisplayUseLogoEnabled(true);
+		actionBar.setLogo(R.drawable.bluetooth_smart_logo);
+		actionBar.setDisplayShowTitleEnabled(false);
+	}
+
+	private boolean ensureBLEExists() {
+		if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+			Toast.makeText(this, R.string.no_ble, Toast.LENGTH_LONG).show();
+			return false;
+		}
+		return true;
+	}
+
+	private boolean ensureBLEEnabled() {
+		if (!mTemperatureManager.isEnabled()) {
+			Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+			startActivityForResult(enableIntent, REQUEST_ENABLE_BT);
+			return false;
+		}
+		return true;
+	}
+}

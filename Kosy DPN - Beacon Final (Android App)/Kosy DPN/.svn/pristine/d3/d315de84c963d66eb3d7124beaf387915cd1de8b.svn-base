@@ -1,0 +1,106 @@
+package no.nordicsemi.android.nrftemp.ble;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.List;
+
+import no.nordicsemi.android.nrftemp.ble.parser.TemperatureData;
+import no.nordicsemi.android.nrftemp.ble.parser.TemperatureDataParser;
+import no.nordicsemi.android.nrftemp.database.DatabaseHelper;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothManager;
+import android.content.Context;
+import android.os.Handler;
+
+public class TemperatureManager implements BluetoothAdapter.LeScanCallback {
+	/** An minimal interval between each data row in the database for a single device */
+	private static final long DATA_INTERVAL = 60 * 5 * 1000L; // ms 
+
+	private BluetoothAdapter mBluetoothAdapter;
+	private DatabaseHelper mDatabaseHelper;
+
+	private List<TemperatureManagerCallback> mListeners;
+
+	public TemperatureManager(final Context context, final DatabaseHelper databaseHelper) {
+		final BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+		mBluetoothAdapter = bluetoothManager.getAdapter();
+		mDatabaseHelper = databaseHelper;
+
+		mListeners = new ArrayList<TemperatureManagerCallback>(2);
+	}
+
+	public void addCallback(final TemperatureManagerCallback callback) {
+		mListeners.add(callback);
+	}
+
+	public void removeCallback(final TemperatureManagerCallback callback) {
+		mListeners.remove(callback);
+	}
+
+	private void fireOnDevicesScanned() {
+		for (TemperatureManagerCallback callback : mListeners)
+			callback.onDevicesScaned();
+	}
+
+	private void fireOnRssiUpdate(final long sensorId, final int rssi) {
+		for (TemperatureManagerCallback callback : mListeners)
+			callback.onRssiUpdate(sensorId, rssi);
+	}
+
+	/**
+	 * Starts scanning for temperature data. Call {@link #stopScan()} when done to save the power.
+	 */
+	public void startScan() {
+		mBluetoothAdapter.startLeScan(this);
+	}
+
+	/**
+	 * Starts scanning for temperature data. Call {@link #stopScan()} when done to save the power.
+	 */
+	public void startScan(final long period) {
+		mBluetoothAdapter.startLeScan(this);
+
+		new Handler().postDelayed(new Runnable() {
+			@Override
+			public void run() {
+				stopScan();
+			}
+		}, period);
+	}
+
+	/**
+	 * Stops scanning for temperature data from BLE sensors.
+	 */
+	public void stopScan() {
+		mBluetoothAdapter.stopLeScan(this);
+	}
+
+	@Override
+	public void onLeScan(final BluetoothDevice device, final int rssi, final byte[] scanRecord) {
+		final TemperatureData td = TemperatureDataParser.parse(device, scanRecord);
+		if (!td.isValid())
+			return;
+
+		final long now = Calendar.getInstance().getTimeInMillis();
+		final long then = mDatabaseHelper.getLastTimestamp(td.getAddress());
+
+		if (now - then > DATA_INTERVAL) {
+			mDatabaseHelper.addNewSensorData(device.getAddress(), device.getName(), now, td.getTemp(), td.getBattery());
+			fireOnDevicesScanned();
+		}
+		final long sensorId = mDatabaseHelper.findSensor(device.getAddress());
+		final int rssiPercent = (int) (100.0f * (127.0f + rssi) / 127.0f + 20.0f);
+		mDatabaseHelper.updateSensorRssi(sensorId, rssiPercent);
+		fireOnRssiUpdate(sensorId, rssiPercent);
+	}
+
+	/**
+	 * Return <code>true</code> if Bluetooth is currently enabled and ready for use.
+	 * 
+	 * @return <code>true</code> if the local adapter is turned on
+	 */
+	public boolean isEnabled() {
+		return mBluetoothAdapter != null && mBluetoothAdapter.isEnabled();
+	}
+}

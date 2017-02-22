@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android" >
+
+    <PreferenceCategory
+        android:icon="@drawable/ic_settings_bluetooth"
+        android:title="@string/settings_bluetooth" >
+        <SwitchPreference
+            android:defaultValue="true"
+            android:fragment="no.nordicsemi.android.nrftemp.fragment.SettingsFragmetn$BluetoothSettingsFragment"
+            android:key="settings_scan_in_background"
+            android:summary="@string/settings_scan_in_background_summary"
+            android:title="@string/settings_scan_in_background_title" />
+
+        <ListPreference
+            android:dependency="settings_scan_in_background"
+            android:entries="@array/settings_periods"
+            android:entryValues="@array/settings_periods_values"
+            android:key="settings_scan_interval"
+            android:defaultValue="300000"
+            android:title="@string/settings_scan_period_title" />
+    </PreferenceCategory>
+    <PreferenceCategory android:title="@string/settings_about" >
+        <no.nordicsemi.android.nrftemp.fragment.AboutPreference android:title="@string/settings_about_title" />
+    </PreferenceCategory>
+
+</PreferenceScreen>

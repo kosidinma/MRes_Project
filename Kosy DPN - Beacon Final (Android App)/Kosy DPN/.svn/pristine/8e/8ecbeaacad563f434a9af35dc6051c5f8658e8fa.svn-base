@@ -1,0 +1,124 @@
+package no.nordicsemi.android.nrftemp.fragment;
+
+import android.app.Activity;
+import android.content.SharedPreferences;
+import android.os.Bundle;
+import android.preference.Preference;
+import android.preference.PreferenceFragment;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+
+import com.nordic.android.nrftemp.R;
+
+public class SettingsFragment extends PreferenceFragment implements SharedPreferences.OnSharedPreferenceChangeListener {
+	public static final String TAG = "SettingsFragment";
+
+	public static final String SETTEINGS_SCAN_IN_BACKGROUND = "settings_scan_in_background";
+	public static final String SETTEINGS_SCAN_INTERVAL = "settings_scan_interval";
+
+	private SettingsFragmentListener mListener;
+	private Preference mScanIntervalPreference;
+
+	public interface SettingsFragmentListener {
+		public void onBackPressed();
+	}
+
+	@Override
+	public void onAttach(final Activity activity) {
+		super.onAttach(activity);
+
+		try {
+			mListener = (SettingsFragmentListener) activity;
+		} catch (final ClassCastException e) {
+			Log.d(TAG, "The parent Activity must implement SettingsFragmentListener interface");
+		}
+	}
+
+	@Override
+	public void onDetach() {
+		super.onDetach();
+
+		mListener = null;
+	}
+
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+
+		// Load the preferences from an XML resource
+		addPreferencesFromResource(R.xml.settings);
+
+		// set up initial values
+		mScanIntervalPreference = getPreferenceScreen().findPreference(SETTEINGS_SCAN_INTERVAL);
+		updateScanInterval();
+	}
+
+	@Override
+	public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+		setHasOptionsMenu(true);
+
+		// we are in child fragment, add 'home as up' button
+		getActivity().getActionBar().setDisplayHomeAsUpEnabled(true);
+
+		return super.onCreateView(inflater, container, savedInstanceState);
+	}
+
+	@Override
+	public void onResume() {
+		super.onResume();
+
+		// attach the preference change listener. It will update the summary below interval preference
+		getPreferenceScreen().getSharedPreferences().registerOnSharedPreferenceChangeListener(this);
+	}
+
+	@Override
+	public void onPause() {
+		super.onPause();
+
+		// unregister listener
+		getPreferenceScreen().getSharedPreferences().unregisterOnSharedPreferenceChangeListener(this);
+	}
+
+	@Override
+	public boolean onOptionsItemSelected(final MenuItem item) {
+		switch (item.getItemId()) {
+		case android.R.id.home:
+			mListener.onBackPressed();
+			break;
+		}
+		return true;
+	}
+
+	@Override
+	public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+		if (SETTEINGS_SCAN_IN_BACKGROUND.equals(key)) {
+			if (!sharedPreferences.getBoolean(SETTEINGS_SCAN_IN_BACKGROUND, true))
+				mScanIntervalPreference.setSummary(null);
+			else
+				updateScanInterval();
+		} else if (SETTEINGS_SCAN_INTERVAL.equals(key))
+			updateScanInterval();
+	}
+
+	/**
+	 * Updates the view. Shows current scan interval setting below the property
+	 */
+	private void updateScanInterval() {
+		if (getActivity() == null)
+			return;
+
+		final String[] periods = getResources().getStringArray(R.array.settings_periods);
+		final String[] values = getResources().getStringArray(R.array.settings_periods_values);
+		final String value = getPreferenceManager().getSharedPreferences().getString(SETTEINGS_SCAN_INTERVAL, "0");
+
+		for (int i = 0; i < values.length; ++i) {
+			if (value.equals(values[i])) {
+				mScanIntervalPreference.setSummary(periods[i]);
+				break;
+			}
+		}
+	}
+}

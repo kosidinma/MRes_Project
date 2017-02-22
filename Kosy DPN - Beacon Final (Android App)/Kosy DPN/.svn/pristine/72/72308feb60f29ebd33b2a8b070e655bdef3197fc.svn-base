@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">nRF Temp 2.0</string>
+    
+    <string name="no_sensors_stored">You have 0 temperature sensors.</string>
+    <string name="no_ble">Device doesn\'t have BLE support!</string>
+    
+    <string name="menu_add">Find new device</string>
+    <string name="menu_graph">View as graph</string>
+    <string name="menu_list">View as list</string>
+    <string name="menu_remove">Remove sensor</string>
+    <string name="menu_show_period">Zoom to&#8230;</string>
+    <string name="menu_day">1 Day</string>
+    <string name="menu_week">1 Week</string>
+    <string name="menu_month">1 Month</string>
+    <string name="menu_all">Show all</string>
+    
+    <string name="scanning">Scanning for sensors&#8230;</string>
+    
+    <string name="status_updated">Recently updated</string>
+    <string name="status_not_found">Not in range</string>
+    
+    <string name="graph_title">Temperature</string>
+    <string name="battery">%d%%</string>
+    <string name="temp">%.2f°C</string>
+    <string name="datetime">%1$te %1$tb %1$tR</string>
+    <string name="time">%tR</string>
+    <string name="date">%1$te %1$tb</string>
+    
+    <string name="alert_remove_sensor_msg">All sensor data will be lost. Do you want to proceed?</string>
+
+</resources>

@@ -1,0 +1,391 @@
+package no.nordicsemi.android.nrftemp.fragment;
+
+import java.util.Calendar;
+
+import no.nordicsemi.android.nrftemp.SensorsActivity;
+import no.nordicsemi.android.nrftemp.adapter.SensorDataAdapter;
+import no.nordicsemi.android.nrftemp.ble.TemperatureManagerCallback;
+import no.nordicsemi.android.nrftemp.database.DatabaseHelper;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.ListFragment;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.database.Cursor;
+import android.graphics.Color;
+import android.os.Bundle;
+import android.text.TextUtils;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.CursorAdapter;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import com.jjoe64.graphview.CustomLabelFormatter;
+import com.jjoe64.graphview.GraphView;
+import com.jjoe64.graphview.GraphView.GraphViewData;
+import com.jjoe64.graphview.GraphViewSeries;
+import com.jjoe64.graphview.GraphViewSeries.GraphViewSeriesStyle;
+import com.jjoe64.graphview.GraphViewStyle;
+import com.jjoe64.graphview.LineGraphView;
+import com.nordic.android.nrftemp.R;
+
+public class SensorDataFragment extends ListFragment implements TemperatureManagerCallback {
+	public static final String TAG = "SensorDataFragment";
+
+	private static final String ARG_SENSOR_ID = "ARG_SENSOR_ID";
+	private static final String ARG_FOCUS = "ARG_FOCUS";
+
+	private static final double DAY = 24 * 60 * 60 * 1000.0; // 1 day in milliseconds
+	private static final double WEEK = 7 * DAY; // 1 week in milliseconds
+	private static final double MONTH = 31 * 24 * 60 * 60 * 1000.0; // 1 months in milliseconds
+
+	/** A length of default view port. It can be zoomed in or out by pinching or set in the top menu */
+	private static final double GRAPH_WINDOW_SIZE = WEEK;
+	/** The margin above and below the real temperature values */
+	private static final double TEMP_GRAPH_MARGIN = 3.0;
+
+	private SensorDataFragmentListener mListener;
+
+	private DatabaseHelper mDatabaseHelper;
+	private ImageView mSignalView;
+	private EditText mNameView;
+	private GraphView mGraphView;
+	private CursorAdapter mAdapter;
+
+	/** Temperature graph style (color and thickness) */
+	private final GraphViewSeriesStyle mGraphTemp = new GraphViewSeriesStyle(0xFF009CDE, 4);
+
+	private long mTotalGraphTime;
+
+	public interface SensorDataFragmentListener {
+		public void onUnregisterCallback(final TemperatureManagerCallback callback);
+
+		public void onBackPressed();
+	}
+
+	/**
+	 * Returns a new instance of the fragment. Passing arguments to the fragment instance, if needed, should be here.
+	 * 
+	 * @return a new instance of the fragment.
+	 */
+	public static SensorDataFragment getInstance(final long sensorId, final boolean focus) {
+		final SensorDataFragment fragment = new SensorDataFragment();
+
+		final Bundle bundle = new Bundle();
+		bundle.putLong(ARG_SENSOR_ID, sensorId);
+		bundle.putBoolean(ARG_FOCUS, focus);
+		fragment.setArguments(bundle);
+
+		return fragment;
+	}
+
+	@Override
+	public void onAttach(final Activity activity) {
+		super.onAttach(activity);
+
+		try {
+			mListener = (SensorDataFragmentListener) activity;
+		} catch (final ClassCastException e) {
+			Log.d(TAG, "The parent Activity must implement SensorDataFragmentListener interface");
+		}
+	}
+
+	@Override
+	public void onDetach() {
+		super.onDetach();
+
+		mListener = null;
+	}
+
+	@Override
+	public void onCreate(final Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+
+		final SensorsActivity activity = (SensorsActivity) getActivity();
+		mDatabaseHelper = activity.getDatabaseHelper();
+	}
+
+	@Override
+	public View onCreateView(final LayoutInflater inflater, final ViewGroup container, final Bundle savedInstanceState) {
+		final ViewGroup view = (ViewGroup) inflater.inflate(R.layout.fragment_sensor_data, container, false);
+
+		mSignalView = (ImageView) view.findViewById(R.id.signal);
+		final EditText nameView = mNameView = (EditText) view.findViewById(R.id.name);
+		final TextView batteryView = (TextView) view.findViewById(R.id.battery);
+
+		final Bundle args = getArguments();
+		final long sensorId = args.getLong(ARG_SENSOR_ID);
+		final Cursor c = mDatabaseHelper.getSensor(sensorId);
+		try {
+			if (c.moveToNext()) {
+				nameView.setText(c.getString(2 /* NAME */));
+
+				final int battery = c.getInt(5 /* BATTERY */);
+				batteryView.setText(getString(R.string.battery, battery));
+				batteryView.getBackground().setLevel(battery);
+			}
+		} finally {
+			c.close();
+		}
+
+		// when a new sensor has been added, open the soft keyboard to change it's name
+		if (args.getBoolean(ARG_FOCUS)) {
+			nameView.post(new Runnable() {
+				@Override
+				public void run() {
+					nameView.requestFocus();
+					nameView.selectAll();
+
+					// show soft keyboard
+					InputMethodManager imm = (InputMethodManager) getActivity().getSystemService(Context.INPUT_METHOD_SERVICE);
+					imm.showSoftInput(nameView, 0);
+				}
+			});
+		}
+
+		// setup the grid view
+		final LineGraphView graphView = new LineGraphView(getActivity(), getString(R.string.graph_title));
+		mGraphView = graphView;
+
+		final GraphViewStyle style = new GraphViewStyle(Color.BLACK, Color.BLACK, Color.GRAY);
+		style.setNumHorizontalLabels(5);
+		style.setNumVerticalLabels(11);
+		style.setTextSize(20.0f);
+		graphView.setGraphViewStyle(style);
+		graphView.setCustomLabelFormatter(new CustomLabelFormatter() {
+			@Override
+			public String formatLabel(final int index, final int total, final double value, final boolean isValueX) {
+				if (isValueX) {
+					final Calendar then = Calendar.getInstance();
+					then.setTimeInMillis((long) value);
+
+					if (mGraphView.getViewPortSize() > 2 * DAY)
+						return getString(R.string.date, then);
+					return getString(index == 0 || index == total ? R.string.datetime : R.string.time, then);
+				} else {
+					return getString(R.string.temp, value);
+				}
+			}
+		});
+		graphView.setScalable(true);
+		graphView.setManualYAxis(true);
+		graphView.setMaximumSizeForDots(DAY);
+		graphView.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
+		graphView.setVisibility(View.GONE);
+
+		view.addView(graphView);
+
+		setHasOptionsMenu(true);
+
+		// we are in child fragment, add 'home as up' button
+		getActivity().getActionBar().setDisplayHomeAsUpEnabled(true);
+
+		return view;
+	}
+
+	@Override
+	public void onViewCreated(final View view, final Bundle savedInstanceState) {
+		super.onViewCreated(view, savedInstanceState);
+
+		final Bundle args = getArguments();
+		final long sensorId = args.getLong(ARG_SENSOR_ID);
+
+		final Cursor cursor = mDatabaseHelper.getSensorHistory(sensorId);
+		updateGraph(cursor, true);
+
+		setListAdapter(mAdapter = new SensorDataAdapter(getActivity(), mDatabaseHelper.getSensorHistory(sensorId)));
+	}
+
+	@Override
+	public void onStop() {
+		super.onStop();
+
+		// hide soft keyboard
+		InputMethodManager imm = (InputMethodManager) getActivity().getSystemService(Context.INPUT_METHOD_SERVICE);
+		imm.hideSoftInputFromWindow(mNameView.getWindowToken(), 0);
+
+		// update the sensor name in the database if not empty
+		final String name = mNameView.getText().toString();
+		if (TextUtils.isEmpty(name))
+			return;
+
+		final Bundle args = getArguments();
+		final long sensorId = args.getLong(ARG_SENSOR_ID);
+		mDatabaseHelper.updateSensorName(sensorId, mNameView.getText().toString());
+
+		mListener.onUnregisterCallback(this);
+	}
+
+	@Override
+	public void onCreateOptionsMenu(final Menu menu, final MenuInflater inflater) {
+		final View graphView = mGraphView;
+		final boolean visible = graphView != null && graphView.getVisibility() == View.VISIBLE;
+
+		inflater.inflate(visible ? R.menu.sensor_data_graph : R.menu.sensor_data_list, menu);
+
+		if (!visible)
+			return;
+
+		// hide calendar options for longer time periods than the current one
+		final long length = mTotalGraphTime;
+		menu.findItem(R.id.month).setVisible(length > MONTH);
+		menu.findItem(R.id.week).setVisible(length > WEEK);
+		menu.findItem(R.id.day).setVisible(length > DAY);
+	}
+
+	@Override
+	public boolean onOptionsItemSelected(final MenuItem item) {
+		final GraphView graphView = mGraphView;
+
+		switch (item.getItemId()) {
+		case android.R.id.home:
+			mListener.onBackPressed();
+			break;
+		case R.id.remove:
+			final DialogInterface.OnClickListener dialogClickListener = new DialogInterface.OnClickListener() {
+				@Override
+				public void onClick(DialogInterface dialog, int which) {
+					switch (which) {
+					case DialogInterface.BUTTON_POSITIVE:
+						final Bundle args = getArguments();
+						final long sensorId = args.getLong(ARG_SENSOR_ID);
+
+						mDatabaseHelper.removeSensor(sensorId);
+						mListener.onBackPressed();
+						break;
+					case DialogInterface.BUTTON_NEGATIVE:
+						//No button clicked. Do nothing
+						break;
+					}
+					dialog.dismiss();
+				}
+			};
+			new AlertDialog.Builder(getActivity()).setMessage(R.string.alert_remove_sensor_msg).setPositiveButton(android.R.string.yes, dialogClickListener)
+					.setNegativeButton(android.R.string.no, dialogClickListener).show();
+			break;
+		case R.id.graph:
+			getListView().setVisibility(View.GONE);
+			graphView.setVisibility(View.VISIBLE);
+			getActivity().invalidateOptionsMenu();
+			break;
+		case R.id.list:
+			getListView().setVisibility(View.VISIBLE);
+			graphView.setVisibility(View.GONE);
+			getActivity().invalidateOptionsMenu();
+			break;
+		case R.id.day:
+			graphView.setViewPort(0, DAY);
+			graphView.scrollToEnd();
+			break;
+		case R.id.week:
+			graphView.setViewPort(0, WEEK);
+			graphView.scrollToEnd();
+			break;
+		case R.id.month:
+			graphView.setViewPort(0, MONTH);
+			graphView.scrollToEnd();
+			break;
+		case R.id.all:
+			graphView.setViewPort(0, 0);
+			graphView.scrollToEnd();
+			break;
+		default:
+			break;
+		}
+		return true;
+	}
+
+	@Override
+	public void onDevicesScaned() {
+		final Bundle args = getArguments();
+		final long sensorId = args.getLong(ARG_SENSOR_ID);
+
+		getActivity().runOnUiThread(new Runnable() {
+			@Override
+			public void run() {
+				if (getActivity() == null)
+					return;
+
+				final Cursor cursor = mDatabaseHelper.getSensorHistory(sensorId);
+				updateGraph(cursor, false);
+				mAdapter.changeCursor(cursor);
+				// scroll to the top of the list
+				getListView().setSelectionAfterHeaderView();
+			}
+		});
+	}
+
+	@Override
+	public void onRssiUpdate(final long id, final int rssi) {
+		final Bundle args = getArguments();
+		final long sensorId = args.getLong(ARG_SENSOR_ID);
+
+		if (id == sensorId) {
+			getActivity().runOnUiThread(new Runnable() {
+				@Override
+				public void run() {
+					if (getActivity() == null)
+						return;
+
+					mSignalView.setImageLevel(rssi);
+				}
+			});
+		}
+	}
+
+	/**
+	 * Updates the graph with new sensor data from database. Called when there was a new advertising package received
+	 * 
+	 * @param cursor
+	 *            the cursor from {@link DatabaseHelper#getSensorHistory(long)} method
+	 * @param resetViewport
+	 *            sets the view port to he last hour of data if <code>true</code>
+	 */
+	private void updateGraph(final Cursor cursor, boolean resetViewport) {
+		final GraphView graphView = mGraphView;
+		final GraphViewData[] tempValues = new GraphViewData[cursor.getCount()];
+		final int size = cursor.getCount();
+
+		// with those two values we can find the lowest and highest temperature value just to set the Y-ax manually
+		double minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
+
+		for (int i = 0; cursor.moveToNext(); ++i) {
+			final double x = cursor.getLong(1 /* TIMESTAMP */);
+			final double y = cursor.getFloat(2 /* TEMP */);
+			if (y < minY)
+				minY = y;
+			if (y > maxY)
+				maxY = y;
+			tempValues[size - i - 1] = new GraphViewData(x, y);
+		}
+
+		final GraphViewSeries series = new GraphViewSeries(getString(R.string.graph_title), mGraphTemp, tempValues);
+
+		graphView.removeAllSeries();
+		graphView.addSeries(series);
+		graphView.setManualYAxisBounds(maxY + TEMP_GRAPH_MARGIN, minY - TEMP_GRAPH_MARGIN);
+
+		// set the view port to the last week or show all
+		if (resetViewport && cursor.moveToFirst()) {
+			final long lastTimestamp = cursor.getLong(1 /* TIMESTAMP */); // most recent one
+			cursor.moveToLast();
+			final long firstTimestamp = cursor.getLong(1 /* TIMESTAMP */); // most recent one
+			if (lastTimestamp - firstTimestamp > GRAPH_WINDOW_SIZE) {
+				graphView.setViewPort(lastTimestamp - GRAPH_WINDOW_SIZE, GRAPH_WINDOW_SIZE);
+			} else {
+				final long diff = mTotalGraphTime = lastTimestamp - firstTimestamp;
+				graphView.setViewPort(firstTimestamp, diff);
+				getActivity().invalidateOptionsMenu();
+			}
+		}
+	}
+}

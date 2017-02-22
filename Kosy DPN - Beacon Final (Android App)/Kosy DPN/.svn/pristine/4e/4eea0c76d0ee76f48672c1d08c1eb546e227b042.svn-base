@@ -1,0 +1,24 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android" >
+    
+    <item android:id="@+id/window_size" android:icon="@drawable/ic_menu_calendar" android:showAsAction="always" android:title="@string/menu_show_period">
+        <menu>
+            <item android:id="@+id/day" android:title="@string/menu_day" android:icon="@android:drawable/ic_menu_day"/>
+            <item android:id="@+id/week" android:title="@string/menu_week" android:icon="@android:drawable/ic_menu_week"/>
+            <item android:id="@+id/month" android:title="@string/menu_month" android:icon="@android:drawable/ic_menu_month"/>
+            <item android:id="@+id/all" android:title="@string/menu_all" android:icon="@drawable/ic_menu_chat_dashboard"/>
+        </menu>
+    </item>
+
+    <item
+        android:id="@+id/list"
+        android:icon="@drawable/ic_menu_list"
+        android:showAsAction="always"
+        android:title="@string/menu_list"/>
+    
+    <item
+        android:id="@+id/remove"
+        android:icon="@drawable/ic_menu_trash"
+        android:showAsAction="always"
+        android:title="@string/menu_remove"/>
+
+</menu>

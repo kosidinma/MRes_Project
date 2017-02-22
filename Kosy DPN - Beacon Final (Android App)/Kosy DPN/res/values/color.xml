@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+    <color name="actionBarColor">#B87816</color>
+    <color name="backgroundColor">#F0C686</color>
+    <color name="dividerColor">#000000</color>
+</resources>
